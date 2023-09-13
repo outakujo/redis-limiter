@@ -4,11 +4,11 @@ local timeWindow = tonumber(ARGV[2])
 if redis.call("EXISTS", key) == 0 then
     redis.call("SET", key, 1)
     redis.call("EXPIRE", key, timeWindow)
-    return 1
+    return true
 else
     if redis.call("INCR", key) > maxRequests then
-        return 0
+        return false
     else
-        return 1
+        return true
     end
 end

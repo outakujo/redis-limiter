@@ -15,9 +15,12 @@ func main() {
 	client := redis.NewClient(&redis.Options{Addr: "localhost:6379"})
 	key := "req_limit"
 	// 每秒限制10个
-	limiter := NewLimiter(client, key, 10, 1)
+	limiter, err := NewLimiter(client, key, 10, 1)
+	if err != nil {
+		panic(err)
+	}
 	var wg sync.WaitGroup
-	for i := 0; i < 10; i++ {
+	for i := 0; i < 15; i++ {
 		wg.Add(1)
 		go func(i int) {
 			take, _ := limiter.Take()
@@ -34,28 +37,39 @@ type Limiter struct {
 	maxRequests int
 	timeWindow  int
 	script      string
+	scriptId    string
 }
 
-func NewLimiter(cli *redis.Client, key string, maxRequests, timeWindow int) *Limiter {
+func NewLimiter(cli *redis.Client, key string, maxRequests, timeWindow int) (*Limiter, error) {
 	file, err := fs.ReadFile("limit.lua")
 	if err != nil {
-		panic(err)
+		return nil, err
 	}
-	return &Limiter{
+	err = cli.Del(context.Background(), key).Err()
+	if err != nil {
+		return nil, err
+	}
+	l := &Limiter{
 		cli:         cli,
 		key:         key,
 		maxRequests: maxRequests,
 		timeWindow:  timeWindow,
 		script:      string(file),
 	}
+	l.scriptId, err = cli.ScriptLoad(context.Background(), l.script).Result()
+	if err != nil {
+		return nil, err
+	}
+	return l, nil
+
 }
 
 func (l *Limiter) Take() (bool, error) {
-	eval := l.cli.Eval(context.Background(), l.script,
+	eval := l.cli.EvalSha(context.Background(), l.scriptId,
 		[]string{l.key}, l.maxRequests, l.timeWindow)
-	i, err := eval.Int()
+	i, err := eval.Bool()
 	if err != nil {
 		return false, err
 	}
-	return i == 1, nil
+	return i, nil
 }
